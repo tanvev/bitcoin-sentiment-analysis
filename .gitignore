@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+
+# Virtual environment
+.venv/
+env/
+venv/
+
+# Jupyter Notebook Checkpoints
+.ipynb_checkpoints
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# PyCharm
+.idea/
+
+# Streamlit cache
+.streamlit/
+
+# Data files (optional)
+data/*.csv
+!data/sample.csv  # Keep a sample file if needed
