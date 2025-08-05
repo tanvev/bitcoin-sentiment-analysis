@@ -6,32 +6,27 @@ from sklearn.metrics import accuracy_score
 
 def run_logistic_model(df):
     df = df.copy()
-
-    # Target: whether next day's return is positive
-    df['target'] = (df['daily_return'].shift(-1) > 0).astype(int)
-    df.dropna(inplace=True)
-
-    # Encode sentiment
     le = LabelEncoder()
-    df['sentiment_encoded'] = le.fit_transform(df['fgi_sentiment_lag1'])
+    df["sentiment_encoded"] = le.fit_transform(df["fgi_sentiment_lag1"])
 
-    X = df[['sentiment_encoded', 'daily_return', 'volatility_7d']]
-    y = df['target']
+    df.dropna(subset=["daily_return", "volatility_7d"], inplace=True)
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
+    X = df[["sentiment_encoded", "daily_return", "volatility_7d"]]
+    y = (df["close"].shift(-1) > df["close"]).astype(int)[:-1]  # 1 if price goes up next day
 
+    X = X.iloc[:-1]  # match shape with y
     model = LogisticRegression()
-    model.fit(X_train, y_train)
+    model.fit(X, y)
 
-    y_pred = model.predict(X_test)
-    acc = accuracy_score(y_test, y_pred)
+    accuracy = model.score(X, y)
 
-    # Show weights
+    # Predict tomorrow's direction
+    latest = df.iloc[-1:][["sentiment_encoded", "daily_return", "volatility_7d"]]
+    pred = model.predict(latest)[0]
+
     coefs = pd.DataFrame({
-        'Feature': X.columns,
-        'Coefficient': model.coef_[0].round(4)
+        "Feature": ["Sentiment", "Daily Return", "Volatility"],
+        "Coefficient": model.coef_[0]
     })
 
-    return acc, coefs
+    return accuracy, pred, coefs
