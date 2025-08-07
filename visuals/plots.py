@@ -88,6 +88,12 @@ def plot_return_histogram(df):
 
 
 def plot_feature_importance(coefs):
+    import pandas as pd
+
+    # Convert to DataFrame if not already
+    if not isinstance(coefs, pd.DataFrame):
+        coefs = pd.DataFrame(coefs, columns=["Feature", "Coefficient"])
+
     fig = px.bar(coefs, x="Feature", y="Coefficient", title="Logistic Regression Coefficients")
     fig.update_layout(xaxis_title="Feature", yaxis_title="Coefficient")
     return fig

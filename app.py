@@ -12,6 +12,15 @@ from visuals.plots import (
     plot_feature_importance,
     plot_volatility_trendline
 )
+from models.model import run_logistic_model
+from models.prediction import load_or_create_prediction
+import os
+import pandas as pd
+from datetime import datetime
+import yfinance as yf
+
+
+
 
 
 
@@ -23,6 +32,28 @@ def load_data():
 
 df = load_data()
 
+# 🛠️ Ensure required columns exist
+if 'target' not in df.columns:
+    df['target'] = (df['close'].shift(-1) > df['close']).astype(int)
+# Add derived columns if missing
+if 'daily_return' not in df.columns:
+    df['daily_return'] = df['close'].pct_change()
+
+if 'volatility' not in df.columns:
+    df['volatility'] = df['daily_return'].rolling(window=7).std()
+
+if 'sentiment_encoded' not in df.columns:
+    # Simple encoding: Fear = 0, Neutral = 1, Greed = 2 (modify if you use other states)
+    sentiment_map = {'Fear': 0, 'Neutral': 1, 'Greed': 2}
+    df['sentiment_encoded'] = df['fgi_sentiment'].map(sentiment_map)
+
+if 'target' not in df.columns:
+    df['target'] = (df['close'].shift(-1) > df['close']).astype(int)
+
+# Remove NaNs introduced by pct_change and rolling
+df.dropna(inplace=True)
+
+
 # Page config
 st.set_page_config(page_title="Bitcoin Sentiment Analysis", layout="wide")
 st.title("📊 Bitcoin Fear & Greed Sentiment Dashboard")
@@ -32,8 +63,17 @@ st.markdown("Built by Tanvi Sundarkar • Inspired by [Gaies et al., 2023]")
 st.sidebar.header("🔎 Filter Data")
 start_date = st.sidebar.date_input("Start Date", df['date'].min().date())
 end_date = st.sidebar.date_input("End Date", df['date'].max().date())
+csv_path = "model.predictions.csv"
+if os.path.exists(csv_path):
+    pred_df = pd.read_csv(csv_path)
+    pred_df = pred_df[pred_df["is_correct"] != "N/A"]
+
+    if not pred_df.empty:
+        accuracy_over_time = pred_df["is_correct"].astype(int).mean()
+        st.metric("📊 Historical Accuracy", f"{accuracy_over_time * 100:.2f}%")
 
 df_filtered = df[(df['date'] >= pd.to_datetime(start_date)) & (df['date'] <= pd.to_datetime(end_date))]
+
 
 # Tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -124,47 +164,56 @@ with tab4:
 with tab5:
     st.subheader("📈 Predicting Price Direction using Sentiment")
 
-    # Run model
-    acc, prediction, coefs = run_logistic_model(df_filtered)
+    # Generate or load prediction
+    pred, accuracy, coefs = load_or_create_prediction(run_logistic_model, df)
 
-    # Accuracy metric
-    st.metric("Model Accuracy", f"{acc * 100:.2f}%")
-    st.caption("📌 This tells how often the model correctly predicted whether BTC will go up or down the next day.")
+    today = datetime.now().strftime("%Y-%m-%d")
+    st.markdown(f"**Prediction for {today}:** BTC will **{'rise 📈' if pred == 1 else 'fall 📉'}** tomorrow.")
+    st.markdown(f"**Model Accuracy on Training Data:** {accuracy:.2%}")
 
-    # Next-day prediction
-    st.subheader("🔮 Tomorrow's BTC Price Direction Prediction")
-    direction = "⬆️ Up" if prediction == 1 else "⬇️ Down"
-    st.success(f"Predicted Direction: **{direction}**")
-    st.caption("📌 Prediction based on today’s sentiment score, daily return, and volatility.")
+    # Feature importance table
+    if coefs is not None:
+        st.subheader("🔍 Feature Importance (Coefficients)")
+        st.dataframe(coefs)
 
-    # Feature Importance
-    st.subheader("📊 Feature Importance (Logistic Coefficients)")
+    # Feature importance bar chart
+
+
+    st.subheader("📊 Feature Influence")
     st.plotly_chart(plot_feature_importance(coefs), use_container_width=True)
-    st.caption("📌 Features with higher absolute coefficients have more influence on the prediction.")
-    st.markdown("### 📘 What do these coefficients mean?")
-    st.markdown("""
-    - These values show how much **each feature influences the prediction**.
-    - Positive values → Feature increases the chance Bitcoin will go **up** tomorrow.
-    - Negative values → Feature increases the chance Bitcoin will go **down** tomorrow.
-    - Bigger the absolute value → stronger the impact.
 
-    **Examples:**
-    - If `daily_return` has a strong positive value → recent gains hint at more gains.
-    - If `sentiment_encoded` is negative → fear in market may signal losses.
-    """)
+    # Live BTC price using yfinance
+    btc = yf.Ticker("BTC-USD")
+    try:
+        live_price = btc.history(period="1d")["Close"].iloc[-1]
+        st.metric("💰 Current BTC Price", f"${live_price:,.2f}")
+    except:
+        st.warning("⚠️ Unable to fetch live BTC price.")
 
-    # Volatility trendline
+    # Volatility trend
     st.subheader("📉 Volatility Trend (7-Day Rolling)")
     st.plotly_chart(plot_volatility_trendline(df_filtered), use_container_width=True)
-    st.caption("📌 Volatility indicates how much BTC price fluctuates over time.")
-    st.markdown("### 📘 Why is volatility important?")
-    st.markdown("""
-    - Higher volatility means more price movement, which could mean **higher risk** or **market stress**.
-    - It helps traders gauge market uncertainty.
-    - A sudden spike in volatility often comes before major moves.
-    """)
 
-    # CSV Download
+    # Historical prediction tracker
+    st.subheader("📅 Historical Prediction Accuracy Tracker")
+    csv_path = "data/predictions.csv"
+    if os.path.exists(csv_path):
+        hist_df = pd.read_csv(csv_path)
+        if "date" in hist_df.columns and "accuracy" in hist_df.columns and "predicted_direction" in hist_df.columns:
+            hist_df["date"] = pd.to_datetime(hist_df["date"])
+            hist_df = hist_df.set_index("date")
+
+            st.line_chart(hist_df["predicted_direction"])
+            st.caption("Shows the predicted direction over time.")
+
+            acc = hist_df["accuracy"].dropna().mean()
+            st.metric("📊 Average Historical Accuracy", f"{acc:.2%}")
+        else:
+            st.warning("❌ Missing required columns in predictions.csv")
+    else:
+        st.warning("📁 predictions.csv not found. Predictions will be stored here after first run.")
+
+    # Dataset download
     st.subheader("💾 Download Filtered Dataset")
     st.download_button(
         label="Download CSV",
@@ -172,23 +221,15 @@ with tab5:
         file_name="filtered_bitcoin_sentiment.csv",
         mime="text/csv"
     )
-    st.caption("📌 Export your filtered dataset for further offline analysis or Excel visualization.")
 
-    # Explain accuracy
-    st.markdown("### 📘 What does model accuracy mean?")
-    st.markdown("""
-    - The model predicts whether the **next day’s BTC return** will be positive or negative.
-    - Accuracy is the percentage of correct predictions the model made.
-    - For example, **80% accuracy** means it correctly predicted 8 out of 10 recent cases.
-    """)
-
-with st.expander("ℹ️ How to interpret these charts?"):
-    st.markdown("""
-    - **Price vs Sentiment**: Understand emotional phases of the market.
-    - **Return Boxplot**: See how emotion affects volatility.
-    - **Heatmap**: Spot relationships between features.
-    - **Prediction**: Estimate next-day price direction from sentiment.
-    """)
+    # Interpretations
+    with st.expander("ℹ️ How to interpret these charts?"):
+        st.markdown("""
+        - **Price vs Sentiment**: Understand emotional phases of the market.
+        - **Return Boxplot**: See how emotion affects volatility.
+        - **Heatmap**: Spot relationships between features.
+        - **Prediction**: Estimate next-day price direction from sentiment.
+        """)
 
 # Footer
 st.markdown("---")

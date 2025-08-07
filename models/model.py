@@ -1,32 +1,36 @@
+# models/model.py
+
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+from sklearn.preprocessing import StandardScaler
 
 def run_logistic_model(df):
-    df = df.copy()
-    le = LabelEncoder()
-    df["sentiment_encoded"] = le.fit_transform(df["fgi_sentiment_lag1"])
+    # Select features and target
+    features = ['fgi_value', 'fgi_value_lag1', 'volatility', 'sentiment_encoded']
+    df_model = df.dropna(subset=features + ['target'])
 
-    df.dropna(subset=["daily_return", "volatility_7d"], inplace=True)
+    X = df_model[features]
+    y = df_model['target']
 
-    X = df[["sentiment_encoded", "daily_return", "volatility_7d"]]
-    y = (df["close"].shift(-1) > df["close"]).astype(int)[:-1]  # 1 if price goes up next day
+    # Normalize features
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
 
-    X = X.iloc[:-1]  # match shape with y
+    # Split data
+    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+
+    # Train logistic regression
     model = LogisticRegression()
-    model.fit(X, y)
+    model.fit(X_train, y_train)
 
-    accuracy = model.score(X, y)
+    # Compute accuracy on training data
+    accuracy = model.score(X_train, y_train)
 
-    # Predict tomorrow's direction
-    latest = df.iloc[-1:][["sentiment_encoded", "daily_return", "volatility_7d"]]
-    pred = model.predict(latest)[0]
-
+    # Extract feature importance
     coefs = pd.DataFrame({
-        "Feature": ["Sentiment", "Daily Return", "Volatility"],
+        "Feature": features,
         "Coefficient": model.coef_[0]
-    })
+    }).sort_values(by="Coefficient", ascending=False)
 
-    return accuracy, pred, coefs
+    return model, scaler, accuracy, coefs
